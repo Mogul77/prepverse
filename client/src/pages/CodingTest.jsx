@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import axios from 'axios';
+import CodeEditor from '../../components/CodeEditor';
 
 function CodingTest() {
   const { id, testId } = useParams();
@@ -8,7 +9,10 @@ function CodingTest() {
 
   const [questions, setQuestions] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [selectedLanguage, setSelectedLanguage] = useState('javascript');
+  
+  // State management for code execution
+  const [language, setLanguage] = useState('java');
+  const [code, setCode] = useState('');
 
   useEffect(() => {
     fetchCodingQuestions();
@@ -24,6 +28,24 @@ function CodingTest() {
       console.error('Error fetching coding questions:', err);
       setLoading(false);
     }
+  };
+
+  // Get the first coding question
+  const question = questions[0];
+
+  // Dynamically load the starter code when the question or language changes
+  useEffect(() => {
+    if (question) {
+      setCode(question.starterCode?.[language] || '');
+    }
+  }, [language, question]);
+
+  const handleRunCode = () => {
+    console.log(code);
+  };
+
+  const handleSubmitCode = () => {
+    console.log(code);
   };
 
   if (loading) {
@@ -53,9 +75,6 @@ function CodingTest() {
       </div>
     );
   }
-
-  // Display only the first coding question as per requirements
-  const question = questions[0];
 
   return (
     <div className="min-h-screen bg-gray-950 flex flex-col text-gray-300">
@@ -124,7 +143,7 @@ function CodingTest() {
             {/* Problem Description */}
             <div className="space-y-2">
               <h3 className="text-xs font-bold uppercase tracking-widest text-gray-500">Problem Description</h3>
-              <p className="text-sm text-gray-350 leading-relaxed whitespace-pre-wrap">
+              <p className="text-sm text-gray-355 leading-relaxed whitespace-pre-wrap">
                 {question.description}
               </p>
             </div>
@@ -210,8 +229,8 @@ function CodingTest() {
             <div className="flex items-center gap-3">
               <span className="text-xs font-bold text-gray-400">Language:</span>
               <select
-                value={selectedLanguage}
-                onChange={(e) => setSelectedLanguage(e.target.value)}
+                value={language}
+                onChange={(e) => setLanguage(e.target.value)}
                 className="bg-gray-800 border border-gray-700 text-gray-200 text-xs font-bold py-1.5 px-3 rounded-lg outline-none focus:border-blue-500 transition-all cursor-pointer"
               >
                 <option value="java">Java</option>
@@ -227,52 +246,43 @@ function CodingTest() {
             </div>
           </div>
 
-          {/* Code Editor Container Box */}
-          <div className="flex-1 p-6 flex flex-col overflow-hidden">
-            <div className="flex-1 bg-gray-900 border border-gray-850 rounded-2xl flex flex-col items-center justify-center p-8 text-center relative overflow-hidden group">
-              
-              {/* Ide background pattern decoration */}
-              <div className="absolute inset-0 opacity-5 select-none font-mono text-[10px] text-left p-4 leading-relaxed pointer-events-none">
-                {`// Pre-loaded starter code structure\n#include <iostream>\nusing namespace std;\n\nint main() {\n    // Code editor loading state\n    for (int i = 0; i < N; i++) {\n        cout << "System OK" << endl;\n    }\n    return 0;\n}`}
+          {/* Code Editor and Output Area */}
+          <div className="flex-1 p-6 flex flex-col overflow-y-auto">
+            {/* Reusable Code Editor component */}
+            <div className="border border-gray-850 rounded-2xl overflow-hidden shadow-lg bg-gray-900">
+              <CodeEditor language={language} code={code} setCode={setCode} />
+            </div>
+
+            {/* Console Output Section Placeholder */}
+            <div className="mt-4 bg-gray-900 border border-gray-850 rounded-2xl p-5 flex flex-col font-mono text-xs text-gray-400 shadow-inner">
+              <div className="flex items-center justify-between border-b border-gray-850 pb-2 mb-3">
+                <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+                  Console Output
+                </span>
+                <span className="text-[9px] text-gray-600 uppercase font-semibold">Standard Output</span>
               </div>
-
-              <div className="max-w-md space-y-4 z-10">
-                <div className="w-16 h-16 bg-gray-950 border border-gray-800 rounded-2xl flex items-center justify-center mx-auto text-blue-500 shadow-md">
-                  <svg className="w-8 h-8 animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
-                  </svg>
-                </div>
-                
-                <h3 className="text-base font-black text-gray-200 uppercase tracking-wider">
-                  IDE Coding Sandbox
-                </h3>
-                
-                <p className="text-xs text-gray-400 max-w-xs mx-auto leading-relaxed">
-                  Code editor will be integrated in the next phase.
-                </p>
-
-                <div className="inline-block bg-gray-950 border border-gray-800 rounded-lg px-3.5 py-1.5 text-[10px] font-mono text-gray-500">
-                  Ready for Monaco Editor Integration
-                </div>
+              <div className="text-gray-500 italic">
+                Run code to see execution and compiler logs here.
               </div>
             </div>
           </div>
 
           {/* Action Footer Buttons bar */}
-          <div className="bg-gray-900 border-t border-gray-850 px-6 py-4 flex items-center justify-end gap-3 shrink-0">
+          <div className="bg-gray-900 border-t border-gray-850 px-6 py-4 flex items-center justify-end gap-3 shrink-0 animate-fadeIn">
             <button
-              disabled
-              className="py-2.5 px-5 border border-gray-800 bg-gray-900/50 text-gray-650 rounded-xl text-xs font-bold transition-all opacity-55 cursor-not-allowed select-none flex items-center gap-1.5"
+              onClick={handleRunCode}
+              className="py-2.5 px-5 bg-gray-800 hover:bg-gray-750 text-gray-200 border border-gray-700 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 active:scale-95 shadow-sm"
             >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <svg className="w-4 h-4 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
               Run Code
             </button>
             <button
-              disabled
-              className="py-2.5 px-6 bg-blue-600/30 text-blue-400 border border-blue-900 rounded-xl text-xs font-bold transition-all opacity-55 cursor-not-allowed select-none flex items-center gap-1.5"
+              onClick={handleSubmitCode}
+              className="py-2.5 px-6 bg-blue-650 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 active:scale-95 shadow shadow-blue-900"
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
