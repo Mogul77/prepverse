@@ -1,7 +1,37 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import axios from 'axios';
 import CodeEditor from '../../components/CodeEditor';
+import { runCode } from '../services/judge0Service';
+import Console from '../../components/Console';
+
+const starterTemplates = {
+  java: `import java.util.*;
+
+public class Main {
+    public static void main(String[] args) {
+        // Write your code here
+    }
+}`,
+  python: `def main():
+    # Write your code here
+    pass
+
+if __name__ == "__main__":
+    main()`,
+  cpp: `#include <iostream>
+using namespace std;
+
+int main() {
+    // Write your code here
+    return 0;
+}`,
+  javascript: `function main() {
+    // Write your code here
+}
+
+main();`
+};
 
 function CodingTest() {
   const { id, testId } = useParams();
@@ -12,40 +42,141 @@ function CodingTest() {
   
   // State management for code execution
   const [language, setLanguage] = useState('java');
-  const [code, setCode] = useState('');
+  const [code, setCode] = useState(starterTemplates.java);
+  const [isRunning, setIsRunning] = useState(false);
+  const [executionResult, setExecutionResult] = useState(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submissionResult, setSubmissionResult] = useState(null);
 
   useEffect(() => {
+    const fetchCodingQuestions = async () => {
+      try {
+        setLoading(true);
+        const res = await axios.get(`http://localhost:5000/api/coding/test/${actualTestId}`);
+        setQuestions(res.data);
+        setLoading(false);
+      } catch (err) {
+        console.error('Error fetching coding questions:', err);
+        setLoading(false);
+      }
+    };
     fetchCodingQuestions();
   }, [actualTestId]);
-
-  const fetchCodingQuestions = async () => {
-    try {
-      setLoading(true);
-      const res = await axios.get(`http://localhost:5000/api/coding/test/${actualTestId}`);
-      setQuestions(res.data);
-      setLoading(false);
-    } catch (err) {
-      console.error('Error fetching coding questions:', err);
-      setLoading(false);
-    }
-  };
 
   // Get the first coding question
   const question = questions[0];
 
-  // Dynamically load the starter code when the question or language changes
+  // Dynamically load the starter code when the language changes
   useEffect(() => {
-    if (question) {
-      setCode(question.starterCode?.[language] || '');
-    }
-  }, [language, question]);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setCode(starterTemplates[language] || '');
+  }, [language]);
 
-  const handleRunCode = () => {
-    console.log(code);
+  const handleRunCode = async () => {
+    try {
+      setIsRunning(true);
+      setExecutionResult(null);
+      const stdin = question?.sampleInput || '';
+      const result = await runCode(code, language, stdin);
+      setExecutionResult(result);
+    } catch (err) {
+      console.error('Execution error:', err);
+      setExecutionResult({
+        status: { id: 13, description: 'Execution Error' },
+        stderr: err.response?.data?.message || err.message || 'An unexpected error occurred during execution.'
+      });
+    } finally {
+      setIsRunning(false);
+    }
   };
 
-  const handleSubmitCode = () => {
-    console.log(code);
+  const handleSubmitCode = async () => {
+    try {
+      setIsSubmitting(true);
+      setSubmissionResult(null);
+
+      // Fetch the latest question details to get hidden test cases
+      const res = await axios.get(`http://localhost:5000/api/coding/test/${actualTestId}`);
+      const latestQuestions = res.data;
+      const latestQuestion = latestQuestions[0];
+
+      if (!latestQuestion || !latestQuestion.hiddenTestCases || latestQuestion.hiddenTestCases.length === 0) {
+        alert("No hidden test cases found for this question.");
+        setIsSubmitting(false);
+        return;
+      }
+
+     const testCases = [
+  ...(latestQuestion.visibleTestCases || []),
+  ...(latestQuestion.hiddenTestCases || [])
+];
+      let passedCount = 0;
+      let totalTime = 0;
+      let maxMemory = 0;
+      const testCaseResults = [];
+
+      for (let i = 0; i < testCases.length; i++) {
+        const tc = testCases[i];
+        // Run code on Judge0
+        const result = await runCode(code, language, tc.input || '');
+        
+        // Clean expected and actual outputs for comparison
+        const expected = (tc.output || '').trim();
+        const actual = (result.stdout || '').trim();
+        console.log("Judge0 Result:", result);
+        
+        const statusId =
+    result.status_id ||
+    result.status?.id;
+
+const passed =
+    expected === actual &&
+    statusId === 3;
+        if (passed) passedCount++;
+
+        totalTime += parseFloat(result.time || 0);
+        maxMemory = Math.max(maxMemory, parseInt(result.memory || 0));
+
+        testCaseResults.push({
+          input: tc.input,
+          expected,
+          actual,
+          status: result.status,
+          passed,
+          time: result.time,
+          memory: result.memory,
+          compile_output: result.compile_output,
+          stderr: result.stderr
+        });
+        console.log("INPUT");
+console.log(tc.input);
+
+console.log("EXPECTED");
+console.log(expected);
+
+console.log("ACTUAL");
+console.log(actual);
+
+console.log(result);
+      }
+
+      const totalCount = testCases.length;
+      const percentage = (passedCount / totalCount) * 100;
+
+      setSubmissionResult({
+        passedCount,
+        totalCount,
+        percentage,
+        totalTime: totalTime.toFixed(3),
+        maxMemory,
+        results: testCaseResults
+      });
+    } catch (err) {
+      console.error('Submission error:', err);
+      alert('An error occurred during submission: ' + err.message);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   if (loading) {
@@ -253,41 +384,135 @@ function CodingTest() {
               <CodeEditor language={language} code={code} setCode={setCode} />
             </div>
 
-            {/* Console Output Section Placeholder */}
-            <div className="mt-4 bg-gray-900 border border-gray-850 rounded-2xl p-5 flex flex-col font-mono text-xs text-gray-400 shadow-inner">
-              <div className="flex items-center justify-between border-b border-gray-850 pb-2 mb-3">
-                <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest flex items-center gap-1.5">
-                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
-                  Console Output
-                </span>
-                <span className="text-[9px] text-gray-600 uppercase font-semibold">Standard Output</span>
-              </div>
-              <div className="text-gray-500 italic">
-                Run code to see execution and compiler logs here.
-              </div>
+            {/* Console Output Section */}
+            <div className="mt-4">
+              <Console isRunning={isRunning} executionResult={executionResult} />
             </div>
+
+            {/* Submission Results Panel */}
+            {submissionResult && (
+              <div className="mt-4 bg-gray-900 border border-blue-900/30 rounded-2xl p-5 flex flex-col font-mono text-xs text-gray-355 shadow-lg">
+                <div className="flex items-center justify-between border-b border-gray-800 pb-3 mb-3">
+                  <span className="text-[10px] font-black text-blue-400 uppercase tracking-widest flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse"></span>
+                    Submission Report
+                  </span>
+                  <button 
+                    onClick={() => setSubmissionResult(null)}
+                    className="text-gray-500 hover:text-gray-350 cursor-pointer"
+                  >
+                    Clear
+                  </button>
+                </div>
+                <div className="grid grid-cols-3 gap-4 mb-4">
+                  <div className="bg-gray-950/60 p-3.5 rounded-xl border border-gray-850 text-center">
+                    <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-1 font-bold">Passed Cases</div>
+                    <div className="text-lg font-black text-emerald-400">
+                      {submissionResult.passedCount} / {submissionResult.totalCount}
+                    </div>
+                    <div className="text-[9px] text-gray-605 mt-0.5">
+                      ({submissionResult.percentage.toFixed(1)}%)
+                    </div>
+                  </div>
+                  <div className="bg-gray-950/60 p-3.5 rounded-xl border border-gray-850 text-center">
+                    <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-1 font-bold">Total Time</div>
+                    <div className="text-lg font-black text-sky-400">
+                      {submissionResult.totalTime}s
+                    </div>
+                    <div className="text-[9px] text-gray-605 mt-0.5">Cumulative</div>
+                  </div>
+                  <div className="bg-gray-950/60 p-3.5 rounded-xl border border-gray-850 text-center">
+                    <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-1 font-bold">Max Memory</div>
+                    <div className="text-lg font-black text-purple-400">
+                      {submissionResult.maxMemory} KB
+                    </div>
+                    <div className="text-[9px] text-gray-605 mt-0.5">Peak Usage</div>
+                  </div>
+                </div>
+
+                {/* Individual Test Cases status list */}
+                <div className="max-h-48 overflow-y-auto space-y-2 pr-1">
+                  {submissionResult.results.map((res, idx) => (
+                    <div key={idx} className={`p-2.5 rounded-xl border flex items-center justify-between text-[11px] ${
+                      res.passed 
+                        ? 'bg-emerald-950/20 border-emerald-900/30' 
+                        : 'bg-rose-950/20 border-rose-900/30'
+                    }`}>
+                      <div className="flex items-center gap-2">
+                        <span className={`w-1.5 h-1.5 rounded-full ${res.passed ? 'bg-emerald-500' : 'bg-rose-500'}`}></span>
+                        <span className="font-semibold text-gray-400">Test Case {idx + 1}:</span>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span className="text-[10px] text-gray-500">
+                          {res.time || '0.00'}s | {res.memory || 0} KB
+                        </span>
+                        <span className={`text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded ${
+                          res.passed ? 'bg-emerald-950 text-emerald-400' : 'bg-rose-950 text-rose-400'
+                        }`}>
+                          {res.passed ? 'Passed' : 'Failed'}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Action Footer Buttons bar */}
           <div className="bg-gray-900 border-t border-gray-850 px-6 py-4 flex items-center justify-end gap-3 shrink-0 animate-fadeIn">
             <button
               onClick={handleRunCode}
-              className="py-2.5 px-5 bg-gray-800 hover:bg-gray-750 text-gray-200 border border-gray-700 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 active:scale-95 shadow-sm"
+              disabled={isRunning}
+              className={`py-2.5 px-5 text-gray-200 border rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 active:scale-95 shadow-sm ${
+                isRunning 
+                  ? 'bg-gray-800 border-gray-800 opacity-60 cursor-not-allowed' 
+                  : 'bg-gray-800 hover:bg-gray-750 border-gray-700'
+              }`}
             >
-              <svg className="w-4 h-4 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              Run Code
+              {isRunning ? (
+                <>
+                  <svg className="animate-spin h-4 w-4 text-blue-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  Running...
+                </>
+              ) : (
+                <>
+                  <svg className="w-4 h-4 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  Run Code
+                </>
+              )}
             </button>
             <button
               onClick={handleSubmitCode}
-              className="py-2.5 px-6 bg-blue-650 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 active:scale-95 shadow shadow-blue-900"
+              disabled={isRunning || isSubmitting}
+              className={`py-2.5 px-6 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 active:scale-95 shadow ${
+                isRunning || isSubmitting
+                  ? 'bg-blue-800 opacity-60 cursor-not-allowed text-gray-300'
+                  : 'bg-blue-650 hover:bg-blue-700 text-white shadow-blue-900'
+              }`}
             >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              Submit Code
+              {isSubmitting ? (
+                <>
+                  <svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  Submitting...
+                </>
+              ) : (
+                <>
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  Submit Code
+                </>
+              )}
             </button>
           </div>
 

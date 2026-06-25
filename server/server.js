@@ -8,6 +8,7 @@ const { protect } = require("./middleware/authmiddleware");
 const resultRoutes = require("./routes/resultRoutes");
 const uploadRoutes = require("./routes/uploadRoutes");
 const codingRoutes = require("./routes/codingRoutes");
+const codeExecutionRoutes = require("./routes/codeExecutionRoutes");
 
 const app = express();
 
@@ -22,6 +23,7 @@ app.use("/api/tests", testRoutes);
 app.use("/api/results", resultRoutes);
 app.use("/api/upload", uploadRoutes);
 app.use("/api/coding", codingRoutes);
+app.use("/api/code", codeExecutionRoutes);
 app.get("/api/protected", protect, (req, res) => {
   res.json({
     message: "Protected Route Accessed",
