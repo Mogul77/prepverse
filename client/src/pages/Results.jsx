@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import axios from "axios";
 
 function Results() {
@@ -26,9 +27,19 @@ function Results() {
     <div className="p-8 bg-gray-100 min-h-screen">
 
       {/* HEADER */}
-      <h1 className="text-3xl font-bold mb-6">
-        📊 My Performance Dashboard
-      </h1>
+      <div className="flex justify-between items-center mb-6">
+        <h1 className="text-3xl font-bold">
+          📊 My MCQ Results
+        </h1>
+        <div className="flex gap-3">
+          <Link to="/dashboard" className="px-4 py-2 bg-gray-650 hover:bg-gray-700 text-white rounded-lg text-xs font-bold transition-all">
+            Dashboard
+          </Link>
+          <Link to="/coding-results" className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold transition-all shadow">
+            View Coding Submissions
+          </Link>
+        </div>
+      </div>
 
       {/* EMPTY STATE */}
       {results.length === 0 ? (

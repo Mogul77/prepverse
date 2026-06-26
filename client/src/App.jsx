@@ -11,6 +11,14 @@ import ManageTest from "./pages/ManageTest";
 import AddQuestions from "./pages/AddQuestions";
 import AddCodingQuestions from "./pages/AddCodingQuestion";
 import CodingTest from "./pages/CodingTest";
+import CodingResultPage from "./pages/CodingResultPage";
+import Leaderboard from "./pages/Leaderboard";
+import AdminAnalytics from "./pages/AdminAnalytics";
+import CompanyLogin from "./pages/CompanyLogin";
+import CompanyRegister from "./pages/CompanyRegister";
+import CompanyDashboard from "./pages/CompanyDashboard";
+import PlacementDrives from "./pages/PlacementDrives";
+import ManageCompanies from "./pages/ManageCompanies";
 
 function App() {
   return (
@@ -27,6 +35,15 @@ function App() {
         <Route path="/add-question/:id"element={<AddQuestions />}/>
         <Route path="/add-coding-questions/:id" element={<AddCodingQuestions />}/>
         <Route path="/coding-test/:testId" element={<CodingTest />} />
+        <Route path="/coding-results" element={<CodingResultPage />} />
+        <Route path="/coding-result/:id" element={<CodingResultPage />} />
+        <Route path="/leaderboard" element={<Leaderboard />} />
+        <Route path="/admin-analytics" element={<AdminAnalytics />} />
+        <Route path="/company/login" element={<CompanyLogin />} />
+        <Route path="/company/register" element={<CompanyRegister />} />
+        <Route path="/company/dashboard" element={<CompanyDashboard />} />
+        <Route path="/placement-drives" element={<PlacementDrives />} />
+        <Route path="/admin/companies" element={<ManageCompanies />} />
       </Routes>
     </BrowserRouter>
   );

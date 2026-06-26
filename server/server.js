@@ -9,6 +9,10 @@ const resultRoutes = require("./routes/resultRoutes");
 const uploadRoutes = require("./routes/uploadRoutes");
 const codingRoutes = require("./routes/codingRoutes");
 const codeExecutionRoutes = require("./routes/codeExecutionRoutes");
+const codingResultRoutes = require("./routes/codingResultRoutes");
+const leaderboardRoutes = require("./routes/leaderboardRoutes");
+const dashboardRoutes = require("./routes/dashboardRoutes");
+const companyRoutes = require("./routes/companyRoutes");
 
 const app = express();
 
@@ -24,6 +28,10 @@ app.use("/api/results", resultRoutes);
 app.use("/api/upload", uploadRoutes);
 app.use("/api/coding", codingRoutes);
 app.use("/api/code", codeExecutionRoutes);
+app.use("/api/coding-results", codingResultRoutes);
+app.use("/api/leaderboard", leaderboardRoutes);
+app.use("/api/dashboard", dashboardRoutes);
+app.use("/api/company", companyRoutes);
 app.get("/api/protected", protect, (req, res) => {
   res.json({
     message: "Protected Route Accessed",

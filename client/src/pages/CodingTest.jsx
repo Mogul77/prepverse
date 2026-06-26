@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import CodeEditor from '../../components/CodeEditor';
 import { runCode } from '../services/judge0Service';
@@ -36,11 +36,20 @@ main();`
 function CodingTest() {
   const { id, testId } = useParams();
   const actualTestId = testId || id;
+  const navigate = useNavigate();
 
+  const [test, setTest] = useState(null);
   const [questions, setQuestions] = useState([]);
   const [loading, setLoading] = useState(true);
   
-  // State management for code execution
+  // Navigation & State Management
+  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
+  const [submittedQuestions, setSubmittedQuestions] = useState({});
+  const [codeMap, setCodeMap] = useState({});
+  const [languageMap, setLanguageMap] = useState({});
+  const [timeLeft, setTimeLeft] = useState(0);
+
+  // Active question state
   const [language, setLanguage] = useState('java');
   const [code, setCode] = useState(starterTemplates.java);
   const [isRunning, setIsRunning] = useState(false);
@@ -48,35 +57,123 @@ function CodingTest() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submissionResult, setSubmissionResult] = useState(null);
 
+  // Fetch test details and coding questions
   useEffect(() => {
-    const fetchCodingQuestions = async () => {
+    const fetchAssessmentDetails = async () => {
       try {
         setLoading(true);
-        const res = await axios.get(`http://localhost:5000/api/coding/test/${actualTestId}`);
-        setQuestions(res.data);
+        // Fetch test details
+        const testRes = await axios.get(`http://localhost:5000/api/tests/${actualTestId}`);
+        setTest(testRes.data);
+        const duration = testRes.data.duration || 60;
+        setTimeLeft(duration * 60);
+
+        // Fetch coding questions
+        const questionsRes = await axios.get(`http://localhost:5000/api/coding/test/${actualTestId}`);
+        setQuestions(questionsRes.data);
         setLoading(false);
       } catch (err) {
-        console.error('Error fetching coding questions:', err);
+        console.error('Error fetching coding assessment data:', err);
         setLoading(false);
       }
     };
-    fetchCodingQuestions();
+    fetchAssessmentDetails();
   }, [actualTestId]);
 
-  // Get the first coding question
-  const question = questions[0];
-
-  // Dynamically load the starter code when the language changes
+  // Handle active question synchronization
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setCode(starterTemplates[language] || '');
-  }, [language]);
+    if (questions.length > 0 && questions[currentQuestionIndex]) {
+      const q = questions[currentQuestionIndex];
+      const qId = q._id;
+
+      // Restore active language or default to java
+      const activeLang = languageMap[qId] || 'java';
+      
+      // Determine what code to load
+      let activeCode = codeMap[qId];
+      if (activeCode === undefined) {
+        // If question was submitted before, restore submitted code
+        if (submittedQuestions[qId]) {
+          activeCode = submittedQuestions[qId].sourceCode;
+        } else {
+          activeCode = starterTemplates[activeLang] || '';
+        }
+      }
+
+      setLanguage(activeLang);
+      setCode(activeCode);
+      setExecutionResult(null);
+
+      // Restore submission details in UI if already submitted
+      if (submittedQuestions[qId]) {
+        setSubmissionResult({
+          passedCount: submittedQuestions[qId].passedTestCases,
+          totalCount: submittedQuestions[qId].totalTestCases,
+          percentage: (submittedQuestions[qId].passedTestCases / submittedQuestions[qId].totalTestCases) * 100,
+          totalTime: submittedQuestions[qId].executionTime.toString(),
+          maxMemory: submittedQuestions[qId].memory,
+          results: submittedQuestions[qId].results || []
+        });
+      } else {
+        setSubmissionResult(null);
+      }
+    }
+  }, [currentQuestionIndex, questions]);
+
+  // Timer Countdown Logic
+  useEffect(() => {
+    if (!timeLeft || loading || submittedQuestions.completed) return;
+
+    const timer = setInterval(() => {
+      setTimeLeft((prev) => {
+        if (prev <= 1) {
+          clearInterval(timer);
+          // Auto submit the assessment when time hits zero
+          handleSubmitAssessment(true);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [timeLeft, loading, questions]);
+
+  const handleCodeChange = (newCode) => {
+    setCode(newCode);
+    if (questions[currentQuestionIndex]) {
+      setCodeMap(prev => ({
+        ...prev,
+        [questions[currentQuestionIndex]._id]: newCode
+      }));
+    }
+  };
+
+  const handleLanguageChange = (newLang) => {
+    setLanguage(newLang);
+    const q = questions[currentQuestionIndex];
+    if (q) {
+      setLanguageMap(prev => ({
+        ...prev,
+        [q._id]: newLang
+      }));
+      const template = starterTemplates[newLang] || '';
+      setCode(template);
+      setCodeMap(prev => ({
+        ...prev,
+        [q._id]: template
+      }));
+    }
+  };
 
   const handleRunCode = async () => {
+    const question = questions[currentQuestionIndex];
+    if (!question) return;
+
     try {
       setIsRunning(true);
       setExecutionResult(null);
-      const stdin = question?.sampleInput || '';
+      const stdin = question.sampleInput || '';
       const result = await runCode(code, language, stdin);
       setExecutionResult(result);
     } catch (err) {
@@ -91,6 +188,9 @@ function CodingTest() {
   };
 
   const handleSubmitCode = async () => {
+    const question = questions[currentQuestionIndex];
+    if (!question) return;
+
     try {
       setIsSubmitting(true);
       setSubmissionResult(null);
@@ -98,18 +198,19 @@ function CodingTest() {
       // Fetch the latest question details to get hidden test cases
       const res = await axios.get(`http://localhost:5000/api/coding/test/${actualTestId}`);
       const latestQuestions = res.data;
-      const latestQuestion = latestQuestions[0];
+      const latestQuestion = latestQuestions.find(q => q._id === question._id) || question;
 
-      if (!latestQuestion || !latestQuestion.hiddenTestCases || latestQuestion.hiddenTestCases.length === 0) {
-        alert("No hidden test cases found for this question.");
+      const testCases = [
+        ...(latestQuestion.visibleTestCases || []),
+        ...(latestQuestion.hiddenTestCases || [])
+      ];
+
+      if (testCases.length === 0) {
+        alert("No test cases found for this question.");
         setIsSubmitting(false);
         return;
       }
 
-     const testCases = [
-  ...(latestQuestion.visibleTestCases || []),
-  ...(latestQuestion.hiddenTestCases || [])
-];
       let passedCount = 0;
       let totalTime = 0;
       let maxMemory = 0;
@@ -123,15 +224,10 @@ function CodingTest() {
         // Clean expected and actual outputs for comparison
         const expected = (tc.output || '').trim();
         const actual = (result.stdout || '').trim();
-        console.log("Judge0 Result:", result);
         
-        const statusId =
-    result.status_id ||
-    result.status?.id;
-
-const passed =
-    expected === actual &&
-    statusId === 3;
+        const statusId = result.status_id || result.status?.id;
+        const passed = expected === actual && statusId === 3;
+        
         if (passed) passedCount++;
 
         totalTime += parseFloat(result.time || 0);
@@ -148,21 +244,30 @@ const passed =
           compile_output: result.compile_output,
           stderr: result.stderr
         });
-        console.log("INPUT");
-console.log(tc.input);
-
-console.log("EXPECTED");
-console.log(expected);
-
-console.log("ACTUAL");
-console.log(actual);
-
-console.log(result);
       }
 
       const totalCount = testCases.length;
       const percentage = (passedCount / totalCount) * 100;
 
+      const resultDetails = {
+        language,
+        sourceCode: code,
+        passedTestCases: passedCount,
+        totalTestCases: totalCount,
+        score: passedCount,
+        executionTime: parseFloat(totalTime.toFixed(3)),
+        memory: maxMemory,
+        results: testCaseResults,
+        submitted: true
+      };
+
+      // Save the result ONLY in React state
+      setSubmittedQuestions(prev => ({
+        ...prev,
+        [question._id]: resultDetails
+      }));
+
+      // Display results immediately
       setSubmissionResult({
         passedCount,
         totalCount,
@@ -171,12 +276,91 @@ console.log(result);
         maxMemory,
         results: testCaseResults
       });
+
+      alert("Question Submitted Successfully (Saved locally)");
     } catch (err) {
       console.error('Submission error:', err);
       alert('An error occurred during submission: ' + err.message);
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  const handleSubmitAssessment = async (isAutoSubmit = false) => {
+    if (!isAutoSubmit && !window.confirm("Are you sure you want to submit the assessment? This will finalize all your coding submissions.")) {
+      return;
+    }
+
+    try {
+      const user = JSON.parse(localStorage.getItem("user")) || {};
+      const studentId = user._id;
+
+      if (!studentId) {
+        alert("User not authenticated.");
+        return;
+      }
+
+      // Collect results of every question from React state
+      const answers = questions.map((q) => {
+        const submission = submittedQuestions[q._id];
+        
+        if (submission) {
+          return {
+            questionId: q._id,
+            language: submission.language,
+            sourceCode: submission.sourceCode,
+            score: submission.score,
+            passedTestCases: submission.passedTestCases,
+            totalTestCases: submission.totalTestCases,
+            executionTime: submission.executionTime,
+            memory: submission.memory,
+            attempted: true
+          };
+        } else {
+          // Never submitted
+          const savedLang = languageMap[q._id] || 'java';
+          const defaultCode = starterTemplates[savedLang] || '';
+          const totalTC = (q.visibleTestCases?.length || 0) + (q.hiddenTestCases?.length || 0);
+
+          return {
+            questionId: q._id,
+            language: savedLang,
+            sourceCode: codeMap[q._id] !== undefined ? codeMap[q._id] : defaultCode,
+            score: 0,
+            passedTestCases: 0,
+            totalTestCases: totalTC || 0,
+            executionTime: 0,
+            memory: 0,
+            attempted: false
+          };
+        }
+      });
+
+      // Send ONE request to the backend
+      const res = await axios.post("http://localhost:5000/api/coding-results", {
+        testId: actualTestId,
+        studentId,
+        answers
+      });
+
+      if (isAutoSubmit) {
+        alert("Time limit reached! Assessment has been auto-submitted.");
+      } else {
+        alert("Assessment submitted successfully!");
+      }
+
+      // Redirect to Result Page
+      navigate(`/coding-result/${res.data.result._id}`);
+    } catch (err) {
+      console.error("Assessment submission error:", err);
+      alert("Failed to submit assessment: " + (err.response?.data?.message || err.message));
+    }
+  };
+
+  const formatTime = (sec) => {
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    return `${m}:${s < 10 ? "0" : ""}${s}`;
   };
 
   if (loading) {
@@ -207,6 +391,10 @@ console.log(result);
     );
   }
 
+  // Get active question
+  const question = questions[currentQuestionIndex];
+  const isTimeUrgent = timeLeft < 300; // Less than 5 mins
+
   return (
     <div className="min-h-screen bg-gray-950 flex flex-col text-gray-300">
       {/* Header Panel */}
@@ -222,18 +410,37 @@ console.log(result);
           <div>
             <h1 className="text-base font-black text-gray-100 flex items-center gap-2">
               <span className="w-2 h-4 bg-blue-500 rounded-sm"></span>
-              Coding Assessment
+              {test?.title || "Coding Assessment"}
             </h1>
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-4">
           <span className="text-[10px] font-black uppercase tracking-wider bg-gray-800 text-gray-400 px-2 py-0.5 rounded border border-gray-700">
-            Q 1 of {questions.length}
+            Q {currentQuestionIndex + 1} of {questions.length}
           </span>
-          <span className="text-[10px] font-black uppercase tracking-wider bg-blue-950 text-blue-400 px-2 py-0.5 rounded border border-blue-900">
-            Active Session
-          </span>
+
+          {/* Countdown Timer */}
+          <div 
+            className={`flex items-center gap-1.5 px-3 py-1.5 bg-gray-800 border rounded-lg text-xs font-bold font-mono transition-all duration-300 ${
+              isTimeUrgent 
+                ? "bg-red-950/80 border-red-900 text-red-400 animate-pulse shadow-sm shadow-red-900" 
+                : "bg-gray-800 border-gray-700 text-gray-300 shadow-sm"
+            }`}
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <span>{formatTime(timeLeft)}</span>
+          </div>
+
+          {/* Submit Assessment Button */}
+          <button
+            onClick={() => handleSubmitAssessment(false)}
+            className="py-1.5 px-4 bg-emerald-650 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-all shadow shadow-emerald-900 cursor-pointer"
+          >
+            Submit Assessment
+          </button>
         </div>
       </header>
 
@@ -244,6 +451,55 @@ console.log(result);
         <div className="w-full md:w-[45%] border-r border-gray-850 bg-gray-900 flex flex-col overflow-y-auto">
           <div className="p-6 space-y-6">
             
+            {/* Question Palette Section */}
+            <div className="bg-gray-950/60 border border-gray-850 p-4 rounded-2xl space-y-3">
+              <div className="flex items-center justify-between">
+                <h4 className="text-xs font-black text-gray-400 uppercase tracking-widest">
+                  Question Palette
+                </h4>
+                <div className="flex gap-3 text-[9px] font-black uppercase tracking-wider text-gray-500">
+                  <div className="flex items-center gap-1">
+                    <span className="w-2 h-2 rounded bg-gray-850 border border-gray-750"></span>
+                    <span>Pending</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <span className="w-2 h-2 rounded bg-blue-600"></span>
+                    <span>Current</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <span className="w-2 h-2 rounded bg-emerald-600"></span>
+                    <span>Submitted</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                {questions.map((q, index) => {
+                  const isCurrent = index === currentQuestionIndex;
+                  const isSubmitted = submittedQuestions[q._id]?.submitted;
+                  
+                  let btnClass = "";
+                  if (isCurrent) {
+                    btnClass = "bg-blue-600 text-white border-blue-500 shadow shadow-blue-900";
+                  } else if (isSubmitted) {
+                    btnClass = "bg-emerald-650 text-white border-emerald-500 shadow shadow-emerald-900";
+                  } else {
+                    btnClass = "bg-gray-850 text-gray-450 border-gray-750 hover:bg-gray-800";
+                  }
+                  
+                  return (
+                    <button
+                      key={q._id}
+                      onClick={() => setCurrentQuestionIndex(index)}
+                      className={`w-9 h-9 rounded-xl border text-xs font-extrabold flex items-center justify-center transition-all cursor-pointer ${btnClass}`}
+                    >
+                      {index + 1}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
             {/* Title & Metadata Badges */}
             <div className="space-y-3">
               <div className="flex flex-wrap gap-2">
@@ -343,7 +599,7 @@ console.log(result);
             {question.explanation && (
               <div className="space-y-2 pt-2">
                 <h3 className="text-xs font-bold uppercase tracking-widest text-gray-500">Explanation</h3>
-                <p className="text-sm text-gray-350 leading-relaxed whitespace-pre-wrap">
+                <p className="text-sm text-gray-355 leading-relaxed whitespace-pre-wrap">
                   {question.explanation}
                 </p>
               </div>
@@ -361,7 +617,7 @@ console.log(result);
               <span className="text-xs font-bold text-gray-400">Language:</span>
               <select
                 value={language}
-                onChange={(e) => setLanguage(e.target.value)}
+                onChange={(e) => handleLanguageChange(e.target.value)}
                 className="bg-gray-800 border border-gray-700 text-gray-200 text-xs font-bold py-1.5 px-3 rounded-lg outline-none focus:border-blue-500 transition-all cursor-pointer"
               >
                 <option value="java">Java</option>
@@ -381,7 +637,7 @@ console.log(result);
           <div className="flex-1 p-6 flex flex-col overflow-y-auto">
             {/* Reusable Code Editor component */}
             <div className="border border-gray-850 rounded-2xl overflow-hidden shadow-lg bg-gray-900">
-              <CodeEditor language={language} code={code} setCode={setCode} />
+              <CodeEditor language={language} code={code} setCode={handleCodeChange} />
             </div>
 
             {/* Console Output Section */}
@@ -399,7 +655,7 @@ console.log(result);
                   </span>
                   <button 
                     onClick={() => setSubmissionResult(null)}
-                    className="text-gray-500 hover:text-gray-350 cursor-pointer"
+                    className="text-gray-500 hover:text-gray-355 cursor-pointer"
                   >
                     Clear
                   </button>
@@ -431,89 +687,126 @@ console.log(result);
                 </div>
 
                 {/* Individual Test Cases status list */}
-                <div className="max-h-48 overflow-y-auto space-y-2 pr-1">
-                  {submissionResult.results.map((res, idx) => (
-                    <div key={idx} className={`p-2.5 rounded-xl border flex items-center justify-between text-[11px] ${
-                      res.passed 
-                        ? 'bg-emerald-950/20 border-emerald-900/30' 
-                        : 'bg-rose-950/20 border-rose-900/30'
-                    }`}>
-                      <div className="flex items-center gap-2">
-                        <span className={`w-1.5 h-1.5 rounded-full ${res.passed ? 'bg-emerald-500' : 'bg-rose-500'}`}></span>
-                        <span className="font-semibold text-gray-400">Test Case {idx + 1}:</span>
+                {submissionResult.results && submissionResult.results.length > 0 && (
+                  <div className="max-h-48 overflow-y-auto space-y-2 pr-1">
+                    {submissionResult.results.map((res, idx) => (
+                      <div key={idx} className={`p-2.5 rounded-xl border flex items-center justify-between text-[11px] ${
+                        res.passed 
+                          ? 'bg-emerald-950/20 border-emerald-900/30' 
+                          : 'bg-rose-950/20 border-rose-900/30'
+                      }`}>
+                        <div className="flex items-center gap-2">
+                          <span className={`w-1.5 h-1.5 rounded-full ${res.passed ? 'bg-emerald-500' : 'bg-rose-500'}`}></span>
+                          <span className="font-semibold text-gray-400">Test Case {idx + 1}:</span>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <span className="text-[10px] text-gray-500">
+                            {res.time || '0.00'}s | {res.memory || 0} KB
+                          </span>
+                          <span className={`text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded ${
+                            res.passed ? 'bg-emerald-950 text-emerald-400' : 'bg-rose-950 text-rose-400'
+                          }`}>
+                            {res.passed ? 'Passed' : 'Failed'}
+                          </span>
+                        </div>
                       </div>
-                      <div className="flex items-center gap-3">
-                        <span className="text-[10px] text-gray-500">
-                          {res.time || '0.00'}s | {res.memory || 0} KB
-                        </span>
-                        <span className={`text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded ${
-                          res.passed ? 'bg-emerald-950 text-emerald-400' : 'bg-rose-950 text-rose-400'
-                        }`}>
-                          {res.passed ? 'Passed' : 'Failed'}
-                        </span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
           </div>
 
           {/* Action Footer Buttons bar */}
-          <div className="bg-gray-900 border-t border-gray-850 px-6 py-4 flex items-center justify-end gap-3 shrink-0 animate-fadeIn">
-            <button
-              onClick={handleRunCode}
-              disabled={isRunning}
-              className={`py-2.5 px-5 text-gray-200 border rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 active:scale-95 shadow-sm ${
-                isRunning 
-                  ? 'bg-gray-800 border-gray-800 opacity-60 cursor-not-allowed' 
-                  : 'bg-gray-800 hover:bg-gray-750 border-gray-700'
-              }`}
-            >
-              {isRunning ? (
-                <>
-                  <svg className="animate-spin h-4 w-4 text-blue-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                  </svg>
-                  Running...
-                </>
-              ) : (
-                <>
-                  <svg className="w-4 h-4 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                  Run Code
-                </>
-              )}
-            </button>
-            <button
-              onClick={handleSubmitCode}
-              disabled={isRunning || isSubmitting}
-              className={`py-2.5 px-6 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 active:scale-95 shadow ${
-                isRunning || isSubmitting
-                  ? 'bg-blue-800 opacity-60 cursor-not-allowed text-gray-300'
-                  : 'bg-blue-650 hover:bg-blue-700 text-white shadow-blue-900'
-              }`}
-            >
-              {isSubmitting ? (
-                <>
-                  <svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                  </svg>
-                  Submitting...
-                </>
-              ) : (
-                <>
-                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                  Submit Code
-                </>
-              )}
-            </button>
+          <div className="bg-gray-900 border-t border-gray-850 px-6 py-4 flex items-center justify-between shrink-0 animate-fadeIn">
+            {/* Multi-question Navigation */}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setCurrentQuestionIndex(prev => prev - 1)}
+                disabled={currentQuestionIndex === 0}
+                className={`py-2.5 px-4 text-gray-300 border rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 active:scale-95 shadow-sm ${
+                  currentQuestionIndex === 0 
+                    ? 'bg-gray-850 border-gray-800 opacity-40 cursor-not-allowed text-gray-505' 
+                    : 'bg-gray-800 hover:bg-gray-750 border-gray-700 cursor-pointer'
+                }`}
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M15 19l-7-7 7-7" />
+                </svg>
+                Previous
+              </button>
+              <button
+                onClick={() => setCurrentQuestionIndex(prev => prev + 1)}
+                disabled={currentQuestionIndex === questions.length - 1}
+                className={`py-2.5 px-4 text-gray-300 border rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 active:scale-95 shadow-sm ${
+                  currentQuestionIndex === questions.length - 1 
+                    ? 'bg-gray-850 border-gray-800 opacity-40 cursor-not-allowed text-gray-505' 
+                    : 'bg-gray-800 hover:bg-gray-750 border-gray-700 cursor-pointer'
+                }`}
+              >
+                Next
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 5l7 7-7 7" />
+                </svg>
+              </button>
+            </div>
+
+            {/* Run Code and Submit Question actions */}
+            <div className="flex items-center gap-3">
+              <button
+                onClick={handleRunCode}
+                disabled={isRunning}
+                className={`py-2.5 px-5 text-gray-200 border rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 active:scale-95 shadow-sm ${
+                  isRunning 
+                    ? 'bg-gray-800 border-gray-800 opacity-60 cursor-not-allowed' 
+                    : 'bg-gray-800 hover:bg-gray-750 border-gray-700'
+                }`}
+              >
+                {isRunning ? (
+                  <>
+                    <svg className="animate-spin h-4 w-4 text-blue-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    Running...
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-4 h-4 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    Run Code
+                  </>
+                )}
+              </button>
+              <button
+                onClick={handleSubmitCode}
+                disabled={isRunning || isSubmitting}
+                className={`py-2.5 px-6 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 active:scale-95 shadow ${
+                  isRunning || isSubmitting
+                    ? 'bg-blue-800 opacity-60 cursor-not-allowed text-gray-300'
+                    : 'bg-blue-650 hover:bg-blue-700 text-white shadow-blue-900 cursor-pointer'
+                }`}
+              >
+                {isSubmitting ? (
+                  <>
+                    <svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    Submitting...
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    Submit Question
+                  </>
+                )}
+              </button>
+            </div>
           </div>
 
         </div>

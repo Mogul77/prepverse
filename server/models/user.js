@@ -28,6 +28,21 @@ const userSchema = new mongoose.Schema({
     enum: ["free", "premium", "college"],
     default: "free",
   },
+
+  department: {
+    type: String,
+    default: "N/A"
+  },
+
+  branch: {
+    type: String,
+    default: "N/A"
+  },
+
+  cgpa: {
+    type: Number,
+    default: 0
+  }
 });
 
 module.exports = mongoose.model("User", userSchema);
